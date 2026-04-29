@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>إتمام الدفع | Yalla Ntlob</title>
+
+<style>
+body { font-family: Arial; background:#f5f8fb; margin:0; }
+.card { background:#fff; padding:20px; border-radius:16px; max-width:600px; margin:30px auto; }
+.field { margin-bottom:12px; }
+input, textarea { width:100%; padding:12px; border-radius:10px; border:1px solid #ddd; }
+button { padding:12px; border:none; border-radius:10px; cursor:pointer; }
+.pay-btn { background:#123a7d; color:white; width:100%; }
+</style>
+</head>
+
+<body>
+
+<div class="card">
+<h2>إتمام الدفع</h2>
+
+<form id="checkoutForm">
+
+<div class="field">
+<label>اسم المستلم</label>
+<input name="customerName" required>
+</div>
+
+<div class="field">
+<label>كود الخصم</label>
+<input id="discountCode" name="discountCode" placeholder="اختياري">
+
+<button type="button" onclick="applyDiscount()">
+تطبيق الخصم
+</button>
+
+<p id="discountResult"></p>
+</div>
+
+<div class="field">
+<label>رقم الهاتف</label>
+<input name="customerPhone" required>
+</div>
+
+<div class="field">
+<label>العنوان</label>
+<textarea name="customerAddress" required></textarea>
+</div>
+
+<input type="hidden" id="amountInput" name="amount" value="0">
+
+</form>
+
+<hr>
+
+<h3>الإجمالي: <span id="totalText">0</span> د.إ</h3>
+
+<button class="pay-btn" id="payBtn">ادفع الآن</button>
+
+</div>
+
+<script>
+const urlParams = new URLSearchParams(window.location.search);
+const amountFromUrl = Number(urlParams.get('amount') || 0);
+
+document.getElementById('totalText').textContent = data.finalAmount.toFixed(2);
+
+// ================== APPLY DISCOUNT ==================
+async function applyDiscount() {
+  const code = document.getElementById('discountCode').value;
+  const resultBox = document.getElementById('discountResult');
+
+  if (!code.trim()) {
+    resultBox.innerText = 'اكتبي كود الخصم أولاً';
+    resultBox.style.color = 'red';
+    return;
+  }
+
+  try {
+    const amount = Number(document.getElementById('amountInput').value || 0);
+
+    const response = await fetch('/check-discount', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        discountCode: code,
+        amount: amount
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.valid) {
+      resultBox.innerText = data.message || 'كود غير صالح';
+      resultBox.style.color = 'red';
+      return;
+    }
+
+    resultBox.innerText = `تم الخصم -${data.discountAmount} د.إ`;
+    resultBox.style.color = 'green';
+
+    document.getElementById('amountInput').value = data.finalAmount;
+    document.getElementById('totalText').textContent = data.finalAmount.toFixed(2);
+
+  } catch (err) {
+    resultBox.innerText = 'خطأ بالسيرفر';
+    resultBox.style.color = 'red';
+  }
+}
+
+// ========== PAY ==========
+<script>
+document.getElementById('payBtn').onclick = async () => {
+  const form = document.getElementById('checkoutForm');
+  const data = Object.fromEntries(new FormData(form).entries());
+
+  data.discountCode = document.getElementById('discountCode')?.value || '';
+  data.amount = Number(document.getElementById('amountInput').value || 0);
+
+  console.log('PAY DATA:', data);
+
+  const res = await fetch('/create-payment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+  window.location.href = result.Data.InvoiceURL;
+};
+</script>
+</body>
+</html>
