@@ -21,7 +21,7 @@ const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;
 const MYFATOORAH_API_KEY = process.env.MYFATOORAH_API_KEY;
 
 const pendingOrders = new Map();
-const createdInvoices = new Set();
+const createdOrders = new Set();
 
 function safeText(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
@@ -82,10 +82,7 @@ async function getShopifyDiscount(code) {
 
   const response = await axios.post(
     `https://${SHOPIFY_STORE}/admin/api/2025-01/graphql.json`,
-    {
-      query,
-      variables: { code }
-    },
+    { query, variables: { code } },
     {
       headers: {
         'X-Shopify-Access-Token': SHOPIFY_TOKEN,
@@ -99,10 +96,7 @@ async function getShopifyDiscount(code) {
 
 function applyDiscountToAmount(amount, discount) {
   if (!discount || discount.status !== 'ACTIVE') {
-    return {
-      finalAmount: amount,
-      discountAmount: 0
-    };
+    return { finalAmount: amount, discountAmount: 0 };
   }
 
   const value = discount.customerGets?.value;
@@ -202,20 +196,16 @@ async function createShopifyOrder(data) {
         { name: 'هاتف المستلم', value: safeRecipientPhone },
         { name: 'عنوان المستلم', value: safeRecipientAddress },
         { name: 'المنطقة', value: safeRecipientCity },
-
         { name: 'اسم صاحب الطلب', value: safeBillingName },
         { name: 'هاتف صاحب الطلب', value: safeBillingPhone },
         { name: 'الإيميل', value: safeBillingEmail },
         { name: 'البلد', value: safeBillingCountry },
-
         { name: 'الشحن بالدولار', value: shippingUsd },
         { name: 'الشحن بالدرهم', value: shippingAed },
-
         { name: 'الإجمالي قبل الخصم', value: originalAmount },
         { name: 'كود الخصم', value: discountCode || '-' },
         { name: 'قيمة الخصم', value: discountAmount },
         { name: 'الإجمالي النهائي', value: finalAmount },
-
         { name: 'الدفع', value: 'MyFatoorah' }
       ]
     }
@@ -246,19 +236,13 @@ app.post('/check-discount', async (req, res) => {
     const { amount, discountCode } = req.body;
 
     if (!discountCode) {
-      return res.json({
-        valid: false,
-        message: 'ما في كود خصم'
-      });
+      return res.json({ valid: false, message: 'ما في كود خصم' });
     }
 
     const discount = await getShopifyDiscount(discountCode);
 
     if (!discount || discount.status !== 'ACTIVE') {
-      return res.json({
-        valid: false,
-        message: 'كود غير صالح'
-      });
+      return res.json({ valid: false, message: 'كود غير صالح' });
     }
 
     const result = applyDiscountToAmount(amount, discount);
@@ -270,7 +254,6 @@ app.post('/check-discount', async (req, res) => {
       discountAmount: result.discountAmount,
       finalAmount: result.finalAmount
     });
-
   } catch (err) {
     console.error('DISCOUNT ERROR:', err.response?.data || err.message);
     res.status(500).json({ error: 'server error' });
@@ -288,7 +271,6 @@ app.post('/create-payment', async (req, res) => {
     }
 
     const data = req.body;
-
     const amount = safeNumber(data.amount);
 
     console.log('AMOUNT RECEIVED FOR PAYMENT:', amount);
@@ -308,13 +290,17 @@ app.post('/create-payment', async (req, res) => {
       return res.status(400).json({ error: 'Invalid amount' });
     }
 
+    const localOrderId = Date.now().toString();
+    pendingOrders.set(localOrderId, data);
+    console.log('Local pending order saved:', localOrderId);
+
     const payload = {
       InvoiceValue: amount,
       CustomerName: safeText(data.customerName, 'Customer'),
       NotificationOption: 'LNK',
       CustomerEmail: safeText(data.customerEmail, 'test@test.com'),
       DisplayCurrencyIso: 'AED',
-      CallBackUrl: `${PUBLIC_BASE_URL}/success`,
+      CallBackUrl: `${PUBLIC_BASE_URL}/success?orderId=${localOrderId}`,
       ErrorUrl: `${PUBLIC_BASE_URL}/error`,
       Language: 'AR'
     };
@@ -366,14 +352,15 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (createdInvoices.has(String(invoiceId))) {
-      console.log('Order already created for invoice:', invoiceId);
+    if (createdOrders.has(String(invoiceId)) || pending._shopifyCreated) {
+      console.log('Order already created:', invoiceId);
       return res.sendStatus(200);
     }
 
     if (status.toLowerCase().includes('success') || status.toLowerCase().includes('paid')) {
       await createShopifyOrder(pending);
-      createdInvoices.add(String(invoiceId));
+      pending._shopifyCreated = true;
+      createdOrders.add(String(invoiceId));
       pendingOrders.delete(String(invoiceId));
       console.log('Shopify order created from webhook:', invoiceId);
     }
@@ -391,71 +378,41 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/success', async (req, res) => {
   try {
-    console.log("=== SUCCESS PAGE CALLED ===");
+    console.log('=== SUCCESS PAGE CALLED ===');
+    console.log('SUCCESS QUERY:', req.query);
 
-    const paymentId = req.query.paymentId;
-    console.log("Payment ID:", paymentId);
+    const orderId = req.query.orderId;
+    const pending = pendingOrders.get(String(orderId));
 
-    // 🟡 fallback: إذا ما في paymentId
-    if (!paymentId) {
-      console.log("⚠️ No paymentId, using last pending order");
-
-      const lastOrder = Object.values(pendingOrders).pop();
-
-      if (!lastOrder) {
-        return res.send("No pending order found");
+    if (pending) {
+      if (!createdOrders.has(String(orderId)) && !pending._shopifyCreated) {
+        await createShopifyOrder(pending);
+        pending._shopifyCreated = true;
+        createdOrders.add(String(orderId));
+        pendingOrders.delete(String(orderId));
+        console.log('Shopify order created from success orderId:', orderId);
+      } else {
+        console.log('Order already created from success orderId:', orderId);
       }
-
-      console.log("🟢 Creating Shopify order from fallback...");
-
-      await createShopifyOrder(lastOrder);
-
-      return res.send(`
-        <h2>✅ تم الدفع بنجاح</h2>
-        <p>تم إنشاء الطلب في المتجر</p>
-      `);
+    } else {
+      console.log('No pending order found for orderId:', orderId);
     }
 
-    // 🟢 الحالة الطبيعية
-    const response = await fetch(`https://api.myfatoorah.com/v2/GetPaymentStatus`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.MYFATOORAH_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        Key: paymentId,
-        KeyType: 'PaymentId'
-      })
-    });
-
-    const data = await response.json();
-    console.log("Payment Status:", data);
-
-    if (data.Data.InvoiceStatus === "Paid") {
-      const order = pendingOrders[paymentId];
-
-      if (!order) {
-        return res.send("Order not found");
-      }
-
-      console.log("🟢 Creating Shopify order...");
-
-      await createShopifyOrder(order);
-
-      return res.send(`
-        <h2>✅ تم الدفع بنجاح</h2>
-        <p>تم إنشاء الطلب في المتجر</p>
-      `);
-    }
-
-    res.send("Payment not completed");
-
-  } catch (err) {
-    console.error("❌ ERROR:", err);
-    res.send("Error");
+    res.send(`
+      <html dir="rtl" lang="ar">
+        <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
+          <h1 style="color:#1e7a3d">تم الدفع بنجاح ✅</h1>
+          <p>شكرًا لك، تم استلام عملية الدفع.</p>
+          <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.log('SUCCESS ERROR:', error.response?.data || error.message);
+    res.send('تم الدفع، لكن حدث خطأ في إنشاء الطلب');
   }
 });
+
 app.get('/error', (req, res) => {
   res.send(`
     <html dir="rtl" lang="ar">
