@@ -21,6 +21,7 @@ const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;
 const MYFATOORAH_API_KEY = process.env.MYFATOORAH_API_KEY;
 
 const pendingOrders = new Map();
+const createdInvoices = new Set();
 
 function safeText(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
@@ -144,9 +145,9 @@ async function createShopifyOrder(data) {
   const shippingAed = formatMoney(data.shippingAed);
   const finalAmount = formatMoney(data.amount);
 
-  const discountCode = data.appliedDiscount?.code || '';
-  const discountAmount = formatMoney(data.appliedDiscount?.discountAmount || 0);
-  const originalAmount = formatMoney(data.appliedDiscount?.originalAmount || data.amount);
+  const discountCode = data.appliedDiscount?.code || data.discountCode || '';
+  const discountAmount = formatMoney(data.appliedDiscount?.discountAmount || data.discountAmount || 0);
+  const originalAmount = formatMoney(data.appliedDiscount?.originalAmount || data.originalAmount || data.amount);
 
   const lineItems = (data.cartItems || [])
     .map((item) => {
@@ -233,9 +234,13 @@ async function createShopifyOrder(data) {
 
   return response.data;
 }
+
+/* =========================
+   Discount Endpoint
+========================= */
+
 app.post('/check-discount', async (req, res) => {
   try {
-
     console.log('CHECK DISCOUNT:', req.body);
 
     const { amount, discountCode } = req.body;
@@ -257,7 +262,8 @@ app.post('/check-discount', async (req, res) => {
     }
 
     const result = applyDiscountToAmount(amount, discount);
-console.log('DISCOUNT RESULT:', result);
+
+    console.log('DISCOUNT RESULT:', result);
 
     return res.json({
       valid: true,
@@ -266,10 +272,11 @@ console.log('DISCOUNT RESULT:', result);
     });
 
   } catch (err) {
-    console.error(err);
+    console.error('DISCOUNT ERROR:', err.response?.data || err.message);
     res.status(500).json({ error: 'server error' });
   }
 });
+
 /* =========================
    Create Payment
 ========================= */
@@ -282,24 +289,20 @@ app.post('/create-payment', async (req, res) => {
 
     const data = req.body;
 
-    let amount = safeNumber(data.amount);
-console.log('AMOUNT RECEIVED FOR PAYMENT:', amount);
+    const amount = safeNumber(data.amount);
 
-let appliedDiscount = null;
-
-console.log('FULL DATA:', data);
-console.log('DISCOUNT CODE RECEIVED:', data.discountCode);
+    console.log('AMOUNT RECEIVED FOR PAYMENT:', amount);
+    console.log('FULL DATA:', data);
+    console.log('DISCOUNT CODE RECEIVED:', data.discountCode);
 
     if (data.discountCode) {
-  appliedDiscount = {
-    code: data.discountCode,
-    discountAmount: safeNumber(data.discountAmount, 0),
-    originalAmount: safeNumber(data.originalAmount, amount),
-    finalAmount: amount
-  };
-
-  data.appliedDiscount = appliedDiscount;
-}
+      data.appliedDiscount = {
+        code: data.discountCode,
+        discountAmount: safeNumber(data.discountAmount, 0),
+        originalAmount: safeNumber(data.originalAmount, amount),
+        finalAmount: amount
+      };
+    }
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: 'Invalid amount' });
@@ -351,17 +354,26 @@ console.log('DISCOUNT CODE RECEIVED:', data.discountCode);
 
 app.post('/webhook', async (req, res) => {
   try {
+    console.log('WEBHOOK RECEIVED:', req.body);
+
     const invoiceId = req.body?.Data?.InvoiceId;
-    const status = req.body?.Data?.TransactionStatus || '';
+    const status = req.body?.Data?.TransactionStatus || req.body?.Data?.InvoiceStatus || '';
 
     const pending = pendingOrders.get(String(invoiceId));
 
     if (!pending) {
+      console.log('No pending order found for webhook invoice:', invoiceId);
       return res.sendStatus(200);
     }
 
-    if (status.toLowerCase().includes('success')) {
+    if (createdInvoices.has(String(invoiceId))) {
+      console.log('Order already created for invoice:', invoiceId);
+      return res.sendStatus(200);
+    }
+
+    if (status.toLowerCase().includes('success') || status.toLowerCase().includes('paid')) {
       await createShopifyOrder(pending);
+      createdInvoices.add(String(invoiceId));
       pendingOrders.delete(String(invoiceId));
       console.log('Shopify order created from webhook:', invoiceId);
     }
@@ -377,16 +389,72 @@ app.post('/webhook', async (req, res) => {
    Result Pages
 ========================= */
 
-app.get('/success', (req, res) => {
-  res.send(`
-    <html dir="rtl" lang="ar">
-      <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
-        <h1 style="color:#1e7a3d">تم الدفع بنجاح ✅</h1>
-        <p>شكرًا لك، تم استلام عملية الدفع.</p>
-        <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
-      </body>
-    </html>
-  `);
+app.get('/success', async (req, res) => {
+  try {
+    console.log('SUCCESS QUERY:', req.query);
+
+    const paymentId = req.query.paymentId || req.query.PaymentId || req.query.Id || req.query.id;
+
+    if (paymentId && MYFATOORAH_API_KEY) {
+      const statusResponse = await axios.post(
+        'https://api-ae.myfatoorah.com/v2/GetPaymentStatus',
+        {
+          Key: paymentId,
+          KeyType: 'PaymentId'
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${MYFATOORAH_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const invoiceId = statusResponse.data?.Data?.InvoiceId;
+      const invoiceStatus = statusResponse.data?.Data?.InvoiceStatus || '';
+
+      console.log('SUCCESS PAYMENT STATUS:', invoiceStatus);
+      console.log('SUCCESS INVOICE ID:', invoiceId);
+
+      const pending = pendingOrders.get(String(invoiceId));
+
+      if (
+        invoiceId &&
+        pending &&
+        !createdInvoices.has(String(invoiceId)) &&
+        invoiceStatus.toLowerCase().includes('paid')
+      ) {
+        await createShopifyOrder(pending);
+        createdInvoices.add(String(invoiceId));
+        pendingOrders.delete(String(invoiceId));
+        console.log('Shopify order created from success page:', invoiceId);
+      } else {
+        console.log('Order not created from success page. Pending exists:', Boolean(pending));
+      }
+    }
+
+    res.send(`
+      <html dir="rtl" lang="ar">
+        <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
+          <h1 style="color:#1e7a3d">تم الدفع بنجاح ✅</h1>
+          <p>شكرًا لك، تم استلام عملية الدفع.</p>
+          <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.log('SUCCESS ERROR:', error.response?.data || error.message);
+
+    res.send(`
+      <html dir="rtl" lang="ar">
+        <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
+          <h1 style="color:#b42318">تم الدفع، لكن حدث خطأ في إنشاء الطلب</h1>
+          <p>يرجى التواصل مع المتجر لتأكيد الطلب.</p>
+          <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
+        </body>
+      </html>
+    `);
+  }
 });
 
 app.get('/error', (req, res) => {
