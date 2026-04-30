@@ -14,11 +14,11 @@ app.use(express.static(__dirname));
 const PORT = process.env.PORT || 3000;
 
 const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL || 'https://device-crib-bullfrog.ngrok-free.dev';
+  process.env.PUBLIC_BASE_URL || 'https://myfatoorah-server.onrender.com';
 
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
 const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;
-const MYFATOORAH_API_KEY = process.env.API_KEY;
+const MYFATOORAH_API_KEY = process.env.MYFATOORAH_API_KEY;
 
 const pendingOrders = new Map();
 
