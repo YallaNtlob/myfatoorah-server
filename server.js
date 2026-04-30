@@ -391,72 +391,71 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/success', async (req, res) => {
   try {
-    console.log('SUCCESS QUERY:', req.query);
+    console.log("=== SUCCESS PAGE CALLED ===");
 
-    const paymentId = req.query.paymentId || req.query.PaymentId || req.query.Id || req.query.id;
+    const paymentId = req.query.paymentId;
+    console.log("Payment ID:", paymentId);
 
-    if (paymentId && MYFATOORAH_API_KEY) {
-      const statusResponse = await axios.post(
-        'https://api-ae.myfatoorah.com/v2/GetPaymentStatus',
-        {
-          Key: paymentId,
-          KeyType: 'PaymentId'
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${MYFATOORAH_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+    // 🟡 fallback: إذا ما في paymentId
+    if (!paymentId) {
+      console.log("⚠️ No paymentId, using last pending order");
 
-      const invoiceId = statusResponse.data?.Data?.InvoiceId;
-      const invoiceStatus = statusResponse.data?.Data?.InvoiceStatus || '';
+      const lastOrder = Object.values(pendingOrders).pop();
 
-      console.log('SUCCESS PAYMENT STATUS:', invoiceStatus);
-      console.log('SUCCESS INVOICE ID:', invoiceId);
-
-      const pending = pendingOrders.get(String(invoiceId));
-
-      if (
-        invoiceId &&
-        pending &&
-        !createdInvoices.has(String(invoiceId)) &&
-        invoiceStatus.toLowerCase().includes('paid')
-      ) {
-        await createShopifyOrder(pending);
-        createdInvoices.add(String(invoiceId));
-        pendingOrders.delete(String(invoiceId));
-        console.log('Shopify order created from success page:', invoiceId);
-      } else {
-        console.log('Order not created from success page. Pending exists:', Boolean(pending));
+      if (!lastOrder) {
+        return res.send("No pending order found");
       }
+
+      console.log("🟢 Creating Shopify order from fallback...");
+
+      await createShopifyOrder(lastOrder);
+
+      return res.send(`
+        <h2>✅ تم الدفع بنجاح</h2>
+        <p>تم إنشاء الطلب في المتجر</p>
+      `);
     }
 
-    res.send(`
-      <html dir="rtl" lang="ar">
-        <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
-          <h1 style="color:#1e7a3d">تم الدفع بنجاح ✅</h1>
-          <p>شكرًا لك، تم استلام عملية الدفع.</p>
-          <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.log('SUCCESS ERROR:', error.response?.data || error.message);
+    // 🟢 الحالة الطبيعية
+    const response = await fetch(`https://api.myfatoorah.com/v2/GetPaymentStatus`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.MYFATOORAH_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        Key: paymentId,
+        KeyType: 'PaymentId'
+      })
+    });
 
-    res.send(`
-      <html dir="rtl" lang="ar">
-        <body style="font-family:Arial;text-align:center;padding:60px;background:#f6f8fb">
-          <h1 style="color:#b42318">تم الدفع، لكن حدث خطأ في إنشاء الطلب</h1>
-          <p>يرجى التواصل مع المتجر لتأكيد الطلب.</p>
-          <a href="https://${SHOPIFY_STORE}" style="color:#123a7d">العودة إلى المتجر</a>
-        </body>
-      </html>
-    `);
+    const data = await response.json();
+    console.log("Payment Status:", data);
+
+    if (data.Data.InvoiceStatus === "Paid") {
+      const order = pendingOrders[paymentId];
+
+      if (!order) {
+        return res.send("Order not found");
+      }
+
+      console.log("🟢 Creating Shopify order...");
+
+      await createShopifyOrder(order);
+
+      return res.send(`
+        <h2>✅ تم الدفع بنجاح</h2>
+        <p>تم إنشاء الطلب في المتجر</p>
+      `);
+    }
+
+    res.send("Payment not completed");
+
+  } catch (err) {
+    console.error("❌ ERROR:", err);
+    res.send("Error");
   }
 });
-
 app.get('/error', (req, res) => {
   res.send(`
     <html dir="rtl" lang="ar">
