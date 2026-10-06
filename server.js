@@ -164,6 +164,13 @@ async function createShopifyOrder(data) {
       line_items: lineItems,
       financial_status: 'paid',
       send_receipt: true,
+      discount_codes: discountCode && discountAmount > 0
+  ? [{
+      code: discountCode,
+      amount: String(discountAmount),
+      type: 'fixed_amount'
+    }]
+  : [],
       tags: discountCode
         ? `MyFatoorah, External Checkout, Discount: ${discountCode}`
         : 'MyFatoorah, External Checkout',
