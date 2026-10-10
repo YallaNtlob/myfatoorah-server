@@ -164,6 +164,13 @@ async function createShopifyOrder(data) {
       line_items: lineItems,
       financial_status: 'paid',
       send_receipt: true,
+      shipping_lines: [
+  {
+    title: 'التوصيل',
+    price: String(shippingAed),
+    code: 'LOCAL_DELIVERY'
+  }
+],
       discount_codes: discountCode && discountAmount > 0
   ? [{
       code: discountCode,
