@@ -439,7 +439,9 @@ app.get('/error', (req, res) => {
     </html>
   `);
 });
-
+// لوحة إدارة طلبات Yalla Ntlob
+const { registerAdminDelivery } = require('./admin-delivery');
+registerAdminDelivery(app);
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Checkout URL: ${PUBLIC_BASE_URL}/checkout`);
