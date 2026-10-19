@@ -61,8 +61,23 @@ function shopify() {
     timeout: 15000
   });
 }
+function getCustomerEmail(order) {
+  const directEmail = order.email || order.customer?.email;
+
+  if (directEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(directEmail)) {
+    return directEmail.trim();
+  }
+
+  const note = String(order.note || '');
+
+  const match = note.match(
+    /(?:الإيميل|البريد الإلكتروني)\s*[:：]\s*([^\s<>]+@[^\s<>]+\.[^\s<>]+)/i
+  );
+
+  return match ? match[1].trim() : '';
+}
 function safeOrder(order) {
-  const email = order.email || order.customer?.email || '';
+  const email = getCustomerEmail(order);
   return {
     id: String(order.id),
     number: order.name,
@@ -220,12 +235,12 @@ function registerAdminDelivery(app) {
         await saveTags(id, withTags(order, {stage}));
         return res.json({ok:true});
       }
-      if (!order.email && !order.customer?.email) return res.status(400).json({error:'الطلب لا يحتوي على بريد الزبون'});
+      if (!getCustomerEmail(order)) return res.status(400).json({error:'الطلب لا يحتوي على بريد الزبون'});
       if (tagsOf(order).includes(SENT[stage])) return res.status(409).json({error:'تم إرسال هذه الرسالة مسبقًا'});
       // نسجل وضع "قيد الإرسال" أولًا؛ في حال انقطاع السيرفر لا يتم إعادة الإرسال دون مراجعة.
       order = await saveTags(id, withTags(order, {stage:old==='new'? 'preparing':old, sending:stage}));
       const email = deliveryEmail(order, stage);
-      const to = order.email || order.customer.email;
+      const to = getCustomerEmail(order);
       try {
         await transport().sendMail({
           from: {name:'Yalla Ntlob', address: process.env.SMTP_FROM || process.env.SMTP_USER},
