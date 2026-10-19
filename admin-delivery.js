@@ -116,7 +116,7 @@ function deliveryEmail(order, kind) {
   const heading = kind === 'out' ? '🚚 طلبك الآن في الطريق!' : '🎉 تم توصيل طلبك بنجاح!';
   const message = kind === 'out'
     ? `يسعدنا إبلاغك بأن طلبك <b>${orderName}</b> أصبح مع مندوب التوصيل، وهو الآن في الطريق. 🚚<br><br>يرجى إبقاء الهاتف قريبًا، فقد يتواصل المندوب عند الوصول.`
-    : `يسعدنا تأكيد توصيل طلبك <b>${orderName}</b> بنجاح. ✅<br><br>نتمنى أن تكون تجربتك مع <b>Yalla Ntlob</b> قد نالت رضاك، وأن تستمتع بطلبك. ❤️<br><br>إذا لم تستلم الطلب، يرجى التواصل معنا فورًا.`;
+    : `يسعدنا تأكيد توصيل طلبك <b>${orderName}</b> بنجاح. ✅<br><br>نتمنى أن تكون تجربتك مع <b>Yalla Ntlob</b> قد نالت رضاك، وأن تستمتع بطلبك. ❤️`;
   const items = (order.line_items || []).map(item =>
     `<tr><td style="padding:10px;border-bottom:1px solid #eee">${escapeHtml(item.title)}</td><td style="padding:10px;border-bottom:1px solid #eee">${Number(item.quantity) || 1}</td></tr>`
   ).join('');
