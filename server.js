@@ -143,6 +143,41 @@ async function createShopifyOrder(data) {
   const discountAmount = formatMoney(data.appliedDiscount?.discountAmount || data.discountAmount || 0);
   const originalAmount = formatMoney(data.appliedDiscount?.originalAmount || data.originalAmount || data.amount);
 
+
+  // معلومات عرض إضافية فقط. لا تغيّر قيمة الفاتورة أو أسعار Shopify.
+  // نفس سعر التحويل المستخدم في main-cart-footer.liquid.
+  const AED_PER_USD = 3.6725;
+  const usdFromAed = (aed) => formatMoney(safeNumber(aed, 0) / AED_PER_USD);
+  const subtotalAed = formatMoney(data.cartSubtotalAed);
+  const cartItemsForDisplay = Array.isArray(data.cartItems) ? data.cartItems : [];
+  const productCurrencyLines = cartItemsForDisplay.slice(0, 30).map((item, index) => {
+    const quantity = Math.max(1, Math.trunc(safeNumber(item.quantity, 1)));
+    // Shopify /cart.js returns prices in cents of the shop currency (AED here).
+    const rawUnitCents = item.final_price ?? item.price ?? item.original_price ?? 0;
+    const unitAed = safeNumber(rawUnitCents, 0) / 100;
+    const lineAed = item.final_line_price != null
+      ? safeNumber(item.final_line_price, 0) / 100
+      : unitAed * quantity;
+    const title = safeText(item.product_title || item.title, `منتج ${index + 1}`)
+      .replace(/[\r\n]+/g, ' ').slice(0, 110);
+    return `${index + 1}. ${title} × ${quantity}: ` +
+      `للقطعة ${formatMoney(unitAed)} AED ≈ $${usdFromAed(unitAed)}؛ ` +
+      `للكمية ${formatMoney(lineAed)} AED ≈ $${usdFromAed(lineAed)}`;
+  });
+  if (cartItemsForDisplay.length > 30) {
+    productCurrencyLines.push('بقية المنتجات ظاهرة في قائمة منتجات Shopify.');
+  }
+  const dualCurrencyDetails = [
+    '💵 الأسعار بالدرهم والدولار (USD للعرض فقط):',
+    ...productCurrencyLines,
+    `مجموع السلة: ${subtotalAed} AED ≈ $${usdFromAed(subtotalAed)}`,
+    `الخصم: -${discountAmount} AED ≈ -$${usdFromAed(discountAmount)}`,
+    `الشحن: ${shippingAed} AED ($${shippingUsd} حسب عرض التوصيل)`,
+    `الإجمالي النهائي: ${finalAmount} AED ≈ $${usdFromAed(finalAmount)}`,
+    `سعر التحويل: 1 USD = ${AED_PER_USD} AED`,
+    'ملاحظة: المدفوع فعلياً بالدرهم AED فقط.'
+  ].join('\n');
+
   const lineItems = (data.cartItems || [])
     .map((item) => {
       const variantId = item.variant_id || item.id;
@@ -204,7 +239,7 @@ async function createShopifyOrder(data) {
 قيمة الخصم: ${discountAmount} د.إ
 الشحن: ${shippingAed} د.إ (${shippingUsd} $)
 الإجمالي النهائي: ${finalAmount} د.إ
-طريقة الدفع: MyFatoorah`,
+طريقة الدفع: MyFatoorah\n\n${dualCurrencyDetails}`,
 
       note_attributes: [
         { name: 'اسم المستلم', value: safeRecipientName },
@@ -221,6 +256,10 @@ async function createShopifyOrder(data) {
         { name: 'كود الخصم', value: discountCode || '-' },
         { name: 'قيمة الخصم', value: discountAmount },
         { name: 'الإجمالي النهائي', value: finalAmount },
+        { name: 'الإجمالي النهائي USD (عرض)', value: usdFromAed(finalAmount) },
+        { name: 'الخصم USD (عرض)', value: usdFromAed(discountAmount) },
+        { name: 'مجموع السلة USD (عرض)', value: usdFromAed(subtotalAed) },
+        { name: 'سعر صرف AED لكل USD', value: String(AED_PER_USD) },
         { name: 'الدفع', value: 'MyFatoorah' }
       ]
     }
